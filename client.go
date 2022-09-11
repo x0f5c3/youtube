@@ -3,13 +3,15 @@ package youtube
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"time"
+
 	"github.com/lithdew/bytesutil"
 	"github.com/lithdew/nicehttp"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fastjson"
+	"github.com/x0f5c3/pterm"
 	"golang.org/x/sync/errgroup"
-	"net/url"
-	"time"
 )
 
 var zeroTime time.Time
@@ -51,7 +53,7 @@ func (c *Client) LoadDeadline(id StreamID, deadline time.Time) (Player, error) {
 	}
 
 	// Attempt to grab the standard player first.
-
+	pterm.Info.Printf("Trying to grab ")
 	player, err = c.LoadWatchPlayerDeadline(id, deadline)
 	if err == nil {
 		return player, nil
