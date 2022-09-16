@@ -9,6 +9,10 @@ type Streams struct {
 	v  *fastjson.Value
 }
 
+func (s Streams) V() *fastjson.Value {
+	return s.v
+}
+
 // ID returns the unique ID pertaining to this stream.
 func (s Streams) ID() StreamID {
 	return s.id

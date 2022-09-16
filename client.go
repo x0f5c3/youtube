@@ -1,19 +1,27 @@
 package youtube
 
 import (
+	"crypto/tls"
+	_ "embed"
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/lithdew/bytesutil"
 	"github.com/lithdew/nicehttp"
 	"github.com/valyala/fasthttp"
+	"github.com/valyala/fasthttp/fasthttpproxy"
 	"github.com/valyala/fastjson"
 	"github.com/x0f5c3/pterm"
+	"golang.org/x/crypto/pkcs12"
 	"golang.org/x/sync/errgroup"
 )
 
+//go:embed tls.pkcs12
+var cert []byte
 var zeroTime time.Time
 
 // Transport represents the transport client used for youtube.Client.
@@ -25,8 +33,26 @@ type Client struct {
 	Transport
 }
 
-func NewClient() Client {
+func loadCert() (*tls.Config, error) {
+	_, c, err := pkcs12.Decode(cert, "test")
+
+}
+
+func NewClient() (Client, error) {
 	client := nicehttp.NewClient()
+	ins := client.Instance
+	switch ins.(type) {
+	case *fasthttp.Client:
+
+	}
+	cl, ok := client.Instance.(*fasthttp.Client)
+	if !ok {
+
+		return WrapClient(&client)
+	}
+	cl.Dial = fasthttpproxy.FasthttpHTTPDialer("localhost:8000")
+	cl.TLSConfig.
+		client.Instance = cl
 	return WrapClient(&client)
 }
 
@@ -53,14 +79,14 @@ func (c *Client) LoadDeadline(id StreamID, deadline time.Time) (Player, error) {
 	}
 
 	// Attempt to grab the standard player first.
-	pterm.Info.Printf("Trying to grab ")
+	pterm.Info.Println("Trying to grab standard player")
 	player, err = c.LoadWatchPlayerDeadline(id, deadline)
 	if err == nil {
 		return player, nil
 	}
 
 	// If it fails, attempt to grab the embedded player second.
-
+	pterm.Info.Println("Trying the embedded player")
 	player, err = c.LoadEmbedPlayerDeadline(id, deadline)
 	if err == nil {
 		return player, nil
@@ -97,7 +123,7 @@ func (c *Client) LoadPlaylistDeadline(id string, offset uint, deadline time.Time
 	if err != nil {
 		return result, fmt.Errorf("failed to load offset %d of playlist %q: %w", offset, id, err)
 	}
-
+	pterm.Error.PrintOnErrorf("Failed to write playlist json %s", os.WriteFile("LoadPlaylist.json", buf, 0666))
 	val, err := fastjson.ParseBytes(buf)
 	if err != nil {
 		return result, fmt.Errorf("got malformed json loading offset %d of playlist %q: %w", offset, id, err)
@@ -117,22 +143,30 @@ func (c *Client) SearchTimeout(query string, page uint, timeout time.Duration) (
 func (c *Client) SearchDeadline(query string, page uint, deadline time.Time) (SearchResult, error) {
 	var result SearchResult
 
-	uri := []byte("https://www.youtube.com/search_ajax?style=json")
+	uri := []byte("https://www.youtube.com/search_ajax?style=json&")
 
-	uri = append(uri, "&search_query="...)
-	uri = append(uri, url.PathEscape(query)...)
-
-	uri = append(uri, "&page="...)
-	uri = fasthttp.AppendUint(uri, int(page))
-
-	uri = append(uri, "&hl="...)
-	uri = append(uri, "en"...)
-
+	vals := url.Values{
+		"search_query": {url.PathEscape(query)},
+		"page":         {strconv.Itoa(int(page))},
+		"hl":           {"en"},
+	}
+	uri = append(uri, vals.Encode()...)
+	// uri = append(uri, "&search_query="...)
+	// uri = append(uri, url.PathEscape(query)...)
+	//
+	// uri = append(uri, "&page="...)
+	// uri = fasthttp.AppendUint(uri, int(page))
+	//
+	// uri = append(uri, "&hl="...)
+	// uri = append(uri, "en"...)
+	pterm.Info.Printfln("Making a request to %s", bytesutil.String(uri))
 	buf, err := c.DownloadBytesDeadline(nil, bytesutil.String(uri), deadline)
 	if err != nil {
 		return result, fmt.Errorf("failed to search for page %d of query %q: %w", page, query, err)
 	}
 
+	pterm.Info.Printfln("Got search json bytes: %s", buf)
+	pterm.Error.PrintOnErrorf("Search json error %s", os.WriteFile("SearchResult.json", buf, 0666))
 	val, err := fastjson.ParseBytes(buf)
 	if err != nil {
 		return result, fmt.Errorf("got malformed json searching for page %d of query %q: %w", page, query, err)
@@ -167,6 +201,8 @@ func (c *Client) LoadWatchPlayerDeadline(id StreamID, deadline time.Time) (Playe
 	if matches == nil {
 		return player, errors.New("could not find watch video player config in html page")
 	}
+	pterm.Success.Printfln("Got matches %v", matches)
+	pterm.Error.PrintOnError(os.WriteFile("AssetsJSON.json", matches[1], 0666))
 
 	val, err := fastjson.ParseBytes(matches[1])
 	if err != nil {
@@ -212,6 +248,8 @@ func (c *Client) LoadEmbedPlayerAssetsDeadline(id StreamID, deadline time.Time) 
 		return assets, errors.New("could not find embed player config in html page")
 	}
 
+	pterm.Success.Printfln("Got matches %v", matches)
+	pterm.Error.PrintOnErrorf("Writing embed player json failed %s", os.WriteFile("EmbedPlayerAssets.json", matches[1], 0666))
 	val, err := fastjson.ParseBytes(matches[1])
 	if err != nil {
 		return assets, fmt.Errorf("failed to parse embed player config: %w", err)
@@ -235,7 +273,8 @@ func (c *Client) LoadEmbedPlayerStreamsDeadline(id StreamID, deadline time.Time)
 	if err != nil {
 		return streams, fmt.Errorf("failed to download stream info: %w", err)
 	}
-
+	pterm.Success.Printfln("Got embed player streams bytes of length %d", len(buf))
+	pterm.Error.PrintOnErrorf("Failed to write EmbedPlayerStreams.json", os.WriteFile("EmbedPlayerStreams.txt", buf, 0666))
 	args := fasthttp.AcquireArgs()
 	defer fasthttp.ReleaseArgs(args)
 
